@@ -69,7 +69,7 @@ paid-media-intelligence/
 │   ├── llm_narrator.py          # the one real LLM call — grounded, with hallucination control
 │   └── business_impact.py       # DIO / stockout / fulfillment cost translation layer
 ├── tests/
-│   └── test_pipeline.py         # 22 pytest tests across all stages
+│   └── test_pipeline.py         # 23 pytest tests across all stages
 ├── data/                        # generated CSVs + all intermediate/output artifacts
 └── outputs/eda/                 # EDA charts (PNG) + markdown report
 ```
@@ -87,7 +87,7 @@ paid-media-intelligence/
 | Budget waste/underspend detector | **Real**, addresses the project's tertiary success metric directly. Honest limitation stated in-app: no hourly pacing data exists in this dataset, so true "hit the cap by noon" detection isn't possible — a documented daily proxy (90th-percentile historical spend as ceiling) is used instead. |
 | Marketer approval view | **Real UI**, fully interactive. No execution happens — submitting just records the decision. |
 | Ads API calls | **Stubbed.** No live credentials. |
-| Automated tests | **Real**, 15 pytest tests: reconciliation correctness (including locking in the intentional Google hyphen-collision bug so it isn't silently "fixed" by a future refactor), feature-leakage prevention, validation gate behavior, optimizer constraint compliance, budget-flag mutual exclusivity. All passing. |
+| Automated tests | **Real**, 23 pytest tests: reconciliation correctness (including locking in the intentional Google hyphen-collision bug so it isn't silently "fixed" by a future refactor), feature-leakage prevention, validation gate behavior, optimizer constraint compliance, budget-flag mutual exclusivity. All passing. |
 | Microsoft | **Out of scope for this slice** by design — the scope allows picking 2-3 platforms. |
 | NC-CPA (secondary success metric) | **Real, computed from raw exports** — split by prospecting vs. retargeting (the dimension the requirements specifically ask for), not just blended per channel. Currently all channels are within the $45 cited target even while blended ROAS misses its target — a real, differentiated finding (the problem is auction saturation, not overpaying for new customers). |
 | LLM integration | **Real, one genuine call, 3-tier provider chain**: (1) a local open-source model via Ollama (default — free, no API key, no third-party data exposure, no external uptime dependency), (2) the Claude API if a key is provided and Ollama isn't reachable, (3) a deterministic template if neither is available. Powers the recommendation narrator in the marketer approval view. Hallucination control applies regardless of provider: constrained context (only the relevant numbers, nothing else), explicit no-invented-figures instruction, and a post-hoc groundedness check that extracts every number in the output and verifies it against the input data — a failed check falls back to the template rather than risk showing a fabricated number. |
@@ -95,13 +95,14 @@ paid-media-intelligence/
 
 ## Pipeline architecture
 
-`src/pipeline.py` orchestrates 9 stages with structured logging and a
+`src/pipeline.py` orchestrates 11 stages with structured logging and a
 machine-readable run manifest (`data/pipeline_run_manifest.json`):
 
 ```
 01 generate_synthetic_data  →  02 validate_raw_exports  →  03 ingest_and_reconcile
   →  04 validate_unified  →  05 feature_engineering  →  06 eda
   →  07 model_cv_and_selection  →  08 budget_utilization  →  09 budget_allocation_optimization
+  →  10 nc_cpa_secondary_metric  →  11 business_impact_dio_fulfillment
 ```
 
 Each stage is timed and wrapped so a failure names the exact stage and
@@ -211,6 +212,6 @@ not a substitute for one.
 2. **PIM-backed SKU reconciliation** replacing the intentionally-fragile string-parsing demo.
 3. **NC-CPA as a hard optimizer constraint**, not just a reported/tracked metric.
 4. **Hourly pacing data** to make the budget-utilization detector exact ("hit cap by noon") rather than a daily proxy.
-5. **LLM layer for the approval view** — auto-drafted reasoning narrative grounded in the optimizer's actual output, to control hallucination (the LLM explains, it doesn't decide).
+5. **Stronger LLM groundedness check** — match each number in the narrative to the specific metric it claims to describe, not just to any input value within tolerance.
 6. **Confidence-aware allocation** — widen optimizer bounds for channels with higher forecast uncertainty (Meta's wider CV variance) instead of treating all point forecasts as equally trustworthy.
 7. **CI integration** — wire `pytest` and the validation gate into a GitHub Actions workflow so a bad data change or regression fails the build, not just a local run.
