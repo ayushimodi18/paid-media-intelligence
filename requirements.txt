@@ -1,0 +1,16 @@
+pandas
+numpy
+scikit-learn
+xgboost
+lightgbm
+prophet
+streamlit
+plotly
+scipy
+pandera
+matplotlib
+seaborn
+pytest
+tabulate
+ollama
+anthropic

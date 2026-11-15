@@ -1,0 +1,4 @@
+channel,current_daily_spend,recommended_daily_spend,change_pct,current_roas,projected_roas,current_marginal_roas,projected_marginal_roas,diminishing_returns_flag,current_daily_revenue,projected_daily_revenue
+Amazon,4974.0,4325.0,-13.0,2.61,2.66,2.23,2.34,True,12992.0,11507.0
+Google,3161.0,3698.0,17.0,3.03,2.94,2.48,2.33,False,9584.0,10878.0
+Meta,5002.0,5114.0,2.2,3.13,3.11,2.38,2.32,True,15654.0,15919.0

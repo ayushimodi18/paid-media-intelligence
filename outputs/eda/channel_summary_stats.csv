@@ -1,0 +1,4 @@
+channel,n_rows,total_spend,total_revenue,mean_daily_spend,median_daily_spend,spend_std,mean_roas,median_roas,pct_imputed_revenue
+Amazon,13140,3630672.52,9370820.4,276.31,213.45,216.66,2.7,2.7,0.02
+Google,10220,2307298.51,6905250.54,225.76,182.94,163.5,3.17,3.07,0.02
+Meta,13130,3651597.52,11082459.16,278.11,216.56,215.36,3.21,2.66,0.03

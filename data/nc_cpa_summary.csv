@@ -1,0 +1,10 @@
+channel,segment,cut,nc_cpa,blended_cpa,nc_cpa_vs_target,within_target,new_customer_conversions,total_spend
+Amazon,All,channel_blended,15.34,15.33,-29.66,True,100330.34,3630974.45
+Google,All,channel_blended,13.34,13.34,-31.66,True,116592.76,3655484.15
+Meta,All,channel_blended,12.99,13.01,-32.01,True,119273.15,3651597.52
+Amazon,Retargeting-type,prospecting_vs_retargeting,21.31,21.29,-23.69,True,10388.64,521975.73
+Amazon,Prospecting-type,prospecting_vs_retargeting,14.65,14.64,-30.35,True,89941.7,3108998.72
+Google,Retargeting-type,prospecting_vs_retargeting,11.67,11.69,-33.33,True,33539.48,915408.06
+Google,Prospecting-type,prospecting_vs_retargeting,14.01,14.01,-30.990000000000002,True,83053.28,2740076.09
+Meta,Retargeting-type,prospecting_vs_retargeting,8.1,8.1,-36.9,True,56944.06,1075684.74
+Meta,Prospecting-type,prospecting_vs_retargeting,17.46,17.42,-27.54,True,62329.090000000004,2575912.78
