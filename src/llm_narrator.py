@@ -55,35 +55,56 @@ class NarrativeResult:
     fallback_reason: str = ""
 
 
-def _extract_numbers(text: str) -> set:
-    """Pull every numeric token (handles $, %, x-suffixed multipliers like
-    '3.5x', commas in thousands) out of a string for the groundedness
-    check."""
-    cleaned = text.replace(",", "")
-    raw = re.findall(r"-?\d+\.?\d*", cleaned)
-    return {round(float(n), 1) for n in raw if n not in ("", "-", ".")}
+_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
 
 
-def _build_allowed_numbers(row: dict, summary: dict) -> set:
+def _extract_numbers(text: str) -> list[tuple[float, int]]:
+    """Pull every numeric token out of a string as (value, decimal places).
+
+    Handles $, %, x-suffixed multipliers ('3.5x') and thousands separators.
+    Signs are dropped on purpose: a model correctly writing "a 13% decrease"
+    for a change of -13.0% must not be flagged. The decimal count is kept so
+    each number can be checked at the precision it was written with."""
+    cleaned = re.sub(r"(?<=\d),(?=\d{3})", "", text)
+    out = []
+    for tok in _NUMBER_RE.findall(cleaned):
+        decimals = len(tok.split(".")[1]) if "." in tok else 0
+        out.append((float(tok), decimals))
+    return out
+
+
+def _build_allowed_numbers(row: dict, summary: dict) -> set[float]:
+    """Every numeric input the model was given, unrounded and unsigned."""
     allowed = set()
     for v in list(row.values()) + list(summary.values()):
-        if isinstance(v, (int, float)):
-            allowed.add(round(float(v), 1))
-    # tolerate only the project's own specifically-cited target figures --
-    # NOT generic round numbers like 0/1/100, which would let a fabricated
-    # value like "99.9x" slip through as "close to 100"
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            allowed.add(abs(float(v)))
+    # the project's own cited targets (4.0x blended ROAS, $45 NC-CPA) -- NOT
+    # generic round numbers, which would let fabricated values slip through
     allowed.update({4.0, 45.0})
     return allowed
 
 
-def _derived_exact_numbers(row: dict) -> set:
-    """Figures a model can correctly derive from the inputs (e.g. the dollar
-    change in spend). Matched EXACTLY as whole dollars, not with the fuzzy
-    tolerance, so a fabricated near-miss like 99.9 can't pass as 100."""
+def _derived_numbers(row: dict) -> set[float]:
+    """Figures a model can correctly derive from two given inputs -- the
+    dollar change in daily spend -- which models state often."""
     try:
-        return {float(round(abs(float(row["recommended_daily_spend"]) - float(row["current_daily_spend"]))))}
+        return {abs(float(row["recommended_daily_spend"]) - float(row["current_daily_spend"]))}
     except (KeyError, TypeError, ValueError):
         return set()
+
+
+def _is_grounded(value: float, decimals: int, sources: set[float]) -> bool:
+    """Precision-aware match: a number written with d decimal places is
+    grounded only if some source value rounds to exactly that number at d
+    places. "2.94x" must match an input that rounds to 2.94; "3x" may be a
+    rounding of 3.03; but "99.9" can never pass as a rounding of 100."""
+    return any(abs(round(s, decimals) - value) < 1e-9 for s in sources)
+
+
+def _ungrounded_numbers(text: str, row: dict, summary: dict) -> list[float]:
+    sources = _build_allowed_numbers(row, summary) | _derived_numbers(row)
+    return [v for v, d in _extract_numbers(text) if not _is_grounded(v, d, sources)]
 
 
 def _template_narrative(row: dict, summary: dict) -> str:
@@ -150,12 +171,7 @@ def _try_anthropic(prompt: str) -> str | None:
 
 
 def _check_groundedness(text: str, row: dict, summary: dict) -> bool:
-    allowed = _build_allowed_numbers(row, summary)
-    found = _extract_numbers(text)
-    exact = _derived_exact_numbers(row)
-    ungrounded = {n for n in found
-                  if n not in exact and not any(abs(n - a) < 0.15 for a in allowed)}
-    return len(ungrounded) == 0
+    return not _ungrounded_numbers(text, row, summary)
 
 
 def generate_recommendation_narrative(row: dict, summary: dict) -> NarrativeResult:
@@ -186,10 +202,15 @@ def generate_recommendation_narrative(row: dict, summary: dict) -> NarrativeResu
         )
 
     # Tier 3: deterministic template -- zero hallucination risk by construction
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        reason = (f"No local Ollama model reachable at {OLLAMA_HOST}, and the Claude API call "
+                  f"failed (check the key and account credits) -- using deterministic template.")
+    else:
+        reason = (f"No local Ollama model reachable at {OLLAMA_HOST} and no "
+                  f"ANTHROPIC_API_KEY set -- using deterministic template.")
     return NarrativeResult(
         text=_template_narrative(row, summary), provider="template", used_llm=False,
-        fallback_reason=f"No local Ollama model reachable at {OLLAMA_HOST} and no "
-                         f"ANTHROPIC_API_KEY set -- using deterministic template.",
+        fallback_reason=reason,
     )
 
 

@@ -28,6 +28,16 @@ from business_impact import estimate_dio_impact, estimate_fulfillment_impact
 
 DATA = Path(__file__).parent / "data"
 
+
+@st.cache_data(ttl=3600, show_spinner="Drafting recommendation narrative…")
+def _cached_narrative(row: dict, summary: dict, has_api_key: bool):
+    """Streamlit reruns the whole script on every widget interaction. Without
+    caching, each click would re-call the LLM for every channel -- slow with a
+    local model and wasted spend with a paid API. Keyed on the recommendation
+    itself (so moving the constraint sliders regenerates it) and on whether an
+    API key is present (so adding a key isn't masked by a cached template)."""
+    return generate_recommendation_narrative(row, summary)
+
 st.set_page_config(page_title="Paid Media Intelligence", layout="wide")
 
 # Load the API key from .streamlit/secrets.toml if present (env var takes precedence).
@@ -76,19 +86,24 @@ with tab1:
     amazon_raw = pd.read_csv(DATA / "amazon_ads_export.csv")
     report, unified = unify()
 
+    def _reconciled_metric(channel: str):
+        """Failures render red; a clean channel renders neutral grey -- never green-for-failure."""
+        failed = report[f"{channel}_unreconciled"]
+        total = report[f"{channel}_total_rows"]
+        rate = failed / total
+        rate_txt = "<0.1%" if 0 < rate < 0.001 else f"{rate:.1%}"
+        st.metric(f"{channel.title()} rows ingested", f"{total:,}")
+        st.metric(f"{channel.title()} reconciled", f"{report[f'{channel}_reconciled']:,}",
+                   delta=f"{failed:,} failed ({rate_txt})" if failed else "0 failed",
+                   delta_color="red" if failed else "gray", delta_arrow="off")
+
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.metric("Meta rows ingested", report["meta_total_rows"])
-        st.metric("Meta reconciled", report["meta_reconciled"],
-                   delta=f"-{report['meta_unreconciled']} failed" if report['meta_unreconciled'] else "0 failed")
+        _reconciled_metric("meta")
     with c2:
-        st.metric("Google rows ingested", report["google_total_rows"])
-        st.metric("Google reconciled", report["google_reconciled"],
-                   delta=f"-{report['google_unreconciled']} failed", delta_color="inverse")
+        _reconciled_metric("google")
     with c3:
-        st.metric("Amazon rows ingested", report["amazon_total_rows"])
-        st.metric("Amazon reconciled", report["amazon_reconciled"],
-                   delta=f"-{report['amazon_unreconciled']} failed", delta_color="inverse")
+        _reconciled_metric("amazon")
 
     if report["google_unreconciled"] > 0:
         st.warning(
@@ -114,20 +129,20 @@ with tab1:
     colA, colB, colC = st.columns(3)
     with colA:
         st.markdown("**Raw Meta export (sample)**")
-        st.dataframe(meta_raw.head(8), use_container_width=True, height=250)
+        st.dataframe(meta_raw.head(8), width="stretch", height=250)
     with colB:
         st.markdown("**Raw Google export (sample)**")
-        st.dataframe(google_raw.head(8), use_container_width=True, height=250)
+        st.dataframe(google_raw.head(8), width="stretch", height=250)
     with colC:
         st.markdown("**Raw Amazon export (sample)**")
-        st.dataframe(amazon_raw.head(8), use_container_width=True, height=250)
+        st.dataframe(amazon_raw.head(8), width="stretch", height=250)
 
     st.markdown("**Unified, reconciled performance table**")
-    st.dataframe(unified.head(15), use_container_width=True)
+    st.dataframe(unified.head(15), width="stretch")
 
     spend_by_channel = unified.groupby("channel")["spend"].sum().reset_index()
     fig = px.pie(spend_by_channel, names="channel", values="spend", title="Spend share by channel")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 # ---------------------------------------------------------------- TAB 2: M2
 with tab2:
@@ -145,7 +160,9 @@ with tab2:
     def highlight_best(row):
         is_best = row["MAPE_mean_%"] == results_df[results_df.channel == row.channel]["MAPE_mean_%"].min()
         return ["background-color: #d4f4dd" if is_best else "" for _ in row]
-    st.dataframe(results_df.style.apply(highlight_best, axis=1), use_container_width=True)
+    st.dataframe(results_df.style.apply(highlight_best, axis=1)
+                 .format({"MAPE_mean_%": "{:.2f}", "MAPE_std_%": "{:.2f}"}),
+                 width="stretch", hide_index=True)
 
     sel_channel = st.selectbox("Channel", list(forecasts.keys()))
     fc = forecasts[sel_channel]
@@ -160,7 +177,7 @@ with tab2:
                                    line=dict(width=0), name="Confidence interval"))
     fig2.update_layout(title=f"{sel_channel} — actual vs forecast (winning model: {fc['best_model']})",
                         xaxis_title="Date", yaxis_title="Revenue ($)")
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
     st.info(f"**Selected model for {sel_channel}: {fc['best_model']}** — chosen automatically "
             f"because it had the lowest backtest MAPE among all candidates for this channel.")
 
@@ -181,7 +198,7 @@ with tab3:
                                    name=f"{ch} current spend", showlegend=False))
     fig3.update_layout(title="Spend → Revenue efficiency curves (diminishing returns visible as flattening)",
                         xaxis_title="Daily spend ($)", yaxis_title="Daily revenue ($)")
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig3, width="stretch")
 
     st.markdown("**Constraints**")
     c1, c2 = st.columns(2)
@@ -198,7 +215,7 @@ with tab3:
                delta=f"{summary['projected_blended_roas'] - summary['current_blended_roas']:+.2f}x")
     m3.metric("Projected daily revenue lift", f"${summary['projected_revenue_lift']:,.0f}")
 
-    st.dataframe(rec_df, use_container_width=True)
+    st.dataframe(rec_df, width="stretch")
 
     for _, r in rec_df.iterrows():
         if r["diminishing_returns_flag"]:
@@ -233,7 +250,8 @@ with tab4:
         decisions = {}
         for i, r in rec_df.iterrows():
             with st.container(border=True):
-                narrative = generate_recommendation_narrative(r.to_dict(), summary)
+                narrative = _cached_narrative(r.to_dict(), summary,
+                                              has_api_key=bool(os.environ.get("ANTHROPIC_API_KEY")))
                 badge = {"ollama": "🖥️ Local model (Ollama)", "anthropic": "☁️ Claude API",
                          "template": "📋 Template (no LLM)"}[narrative.provider]
                 st.caption(badge)
@@ -289,17 +307,17 @@ with tab5:
         st.markdown("**Top SKU-channel combos by waste rate**")
         st.dataframe(bu_summary.sort_values("waste_rate", ascending=False).head(10)[
             ["channel", "sku", "waste_rate", "avg_roas", "avg_spend", "spend_ceiling_p90"]
-        ], use_container_width=True)
+        ], width="stretch")
     with sub2:
         st.markdown("**Top SKU-channel combos by underspend opportunity**")
         st.dataframe(bu_summary.sort_values("underspend_rate", ascending=False).head(10)[
             ["channel", "sku", "underspend_rate", "avg_roas", "avg_spend", "spend_ceiling_p90"]
-        ], use_container_width=True)
+        ], width="stretch")
 
     fig5 = px.scatter(bu_summary, x="avg_spend", y="avg_roas", size="days_observed",
                        color="channel", hover_data=["sku"],
                        title="SKU-channel avg ROAS vs avg spend — bubble size = days observed")
-    st.plotly_chart(fig5, use_container_width=True)
+    st.plotly_chart(fig5, width="stretch")
 
 # ---------------------------------------------------------------- TAB 6: NC-CPA & Business Impact
 with tab6:
@@ -322,7 +340,7 @@ with tab6:
     st.markdown("**Prospecting vs. retargeting split** — the metric that actually matters, since a "
                 "blended channel average can hide a starved top-of-funnel:")
     st.dataframe(funnel_view[["channel", "segment", "nc_cpa", "blended_cpa", "within_target",
-                               "new_customer_conversions"]], use_container_width=True)
+                               "new_customer_conversions"]], width="stretch")
 
     st.divider()
     st.subheader("Business Judgment: DIO, Stockout Risk & Fulfillment Cost")

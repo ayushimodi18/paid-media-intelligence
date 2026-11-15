@@ -250,32 +250,44 @@ class TestLlmNarrator:
         assert result.used_llm == False
         assert "1000" in result.text.replace(",", "")  # template references the real spend figure
 
+    # Shared fixture for the groundedness tests -- deterministic, no live LLM call.
+    ROW = {"channel": "Amazon", "current_daily_spend": 4974.0, "recommended_daily_spend": 4325.0,
+           "change_pct": -13.04, "current_roas": 2.614, "projected_roas": 2.661,
+           "current_marginal_roas": 2.23, "projected_marginal_roas": 2.34}
+    SUMMARY = {"current_blended_roas": 2.91, "projected_blended_roas": 2.95}
+
+    def _ungrounded(self, text):
+        return llm_narrator._ungrounded_numbers(text, self.ROW, self.SUMMARY)
+
     def test_groundedness_check_rejects_fabricated_numbers(self):
-        """The groundedness check must catch a number that wasn't in the
-        input -- simulated directly rather than depending on a live API
-        call, so this test is deterministic and runs without a key."""
-        row = {"channel": "Meta", "current_daily_spend": 1000.0, "recommended_daily_spend": 1100.0,
-               "change_pct": 10.0, "current_roas": 3.0, "projected_roas": 3.1,
-               "current_marginal_roas": 2.5, "projected_marginal_roas": 2.4}
-        summary = {"current_blended_roas": 2.9, "projected_blended_roas": 2.95}
-        allowed = llm_narrator._build_allowed_numbers(row, summary)
+        assert 99.9 in self._ungrounded("ROAS could reach 99.9x")
+        assert 3.5 in self._ungrounded("lifting ROAS to 3.5x")
 
-        fabricated_text = "Spend will rise to $1,100 with ROAS reaching 99.9x"  # 99.9 is not in the input
-        found = llm_narrator._extract_numbers(fabricated_text)
-        ungrounded = {n for n in found if not any(abs(n - a) < 0.15 for a in allowed)}
-        assert 99.9 in ungrounded
+    def test_groundedness_rejects_near_miss_that_old_tolerance_allowed(self):
+        """2.74 is within 0.15 of the real 2.661 -- the previous fuzzy check
+        accepted it. Precision-aware matching must not."""
+        assert 2.74 in self._ungrounded("projected ROAS of 2.74x")
 
-    def test_groundedness_check_accepts_real_numbers(self):
-        row = {"channel": "Meta", "current_daily_spend": 1000.0, "recommended_daily_spend": 1100.0,
-               "change_pct": 10.0, "current_roas": 3.0, "projected_roas": 3.1,
-               "current_marginal_roas": 2.5, "projected_marginal_roas": 2.4}
-        summary = {"current_blended_roas": 2.9, "projected_blended_roas": 2.95}
-        allowed = llm_narrator._build_allowed_numbers(row, summary)
+    def test_groundedness_accepts_real_numbers_and_honest_rounding(self):
+        text = ("Cut Amazon spend 13% from $4,974 to $4,325; ROAS moves from 2.61x to 2.66x "
+                "(about 2.7x), with marginal ROAS 2.23x -> 2.34x and blended ROAS 2.95x.")
+        assert self._ungrounded(text) == []
 
-        clean_text = "Spend will rise to $1,100 from $1,000, lifting ROAS from 3.0x to 3.1x."
-        found = llm_narrator._extract_numbers(clean_text)
-        ungrounded = {n for n in found if not any(abs(n - a) < 0.15 for a in allowed)}
-        assert len(ungrounded) == 0
+    def test_groundedness_accepts_derived_spend_change(self):
+        assert self._ungrounded("a $649 reduction in daily spend") == []
+        assert 650.0 in self._ungrounded("a $650 reduction in daily spend")
+
+    def test_ungrounded_llm_output_falls_back_to_template(self, monkeypatch):
+        monkeypatch.setattr(llm_narrator, "_try_ollama", lambda prompt: "ROAS will hit 9.9x.")
+        result = llm_narrator.generate_recommendation_narrative(self.ROW, self.SUMMARY)
+        assert result.provider == "template"
+        assert result.groundedness_check_passed is False
+
+    def test_grounded_llm_output_is_used(self, monkeypatch):
+        monkeypatch.setattr(llm_narrator, "_try_ollama",
+                            lambda prompt: "Reduce Amazon spend by 13.0% to $4,325 per day.")
+        result = llm_narrator.generate_recommendation_narrative(self.ROW, self.SUMMARY)
+        assert result.provider == "ollama" and result.used_llm
 
 
 # ---------------------------------------------------------------- business impact
