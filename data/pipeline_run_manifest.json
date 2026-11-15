@@ -1,57 +1,57 @@
 {
-  "started_at": "2026-06-30T22:19:48.978393+00:00",
+  "started_at": "2026-11-15T23:24:26.378225+00:00",
   "stages": [
     {
       "name": "02_validate_raw_exports",
       "status": "ok",
-      "seconds": 0.68
+      "seconds": 1.11
     },
     {
       "name": "03_ingest_and_reconcile",
       "status": "ok",
-      "seconds": 0.35
+      "seconds": 0.21
     },
     {
       "name": "04_validate_unified",
       "status": "ok",
-      "seconds": 0.09
+      "seconds": 0.04
     },
     {
       "name": "05_feature_engineering",
       "status": "ok",
-      "seconds": 0.14
+      "seconds": 0.06
     },
     {
       "name": "06_eda",
       "status": "ok",
-      "seconds": 3.24
+      "seconds": 2.49
     },
     {
       "name": "07_model_cv_and_selection",
       "status": "ok",
-      "seconds": 3.08
+      "seconds": 5.14
     },
     {
       "name": "08_budget_utilization",
       "status": "ok",
-      "seconds": 0.03
+      "seconds": 0.02
     },
     {
       "name": "09_budget_allocation_optimization",
       "status": "ok",
-      "seconds": 0.14
+      "seconds": 0.09
     },
     {
       "name": "10_nc_cpa_secondary_metric",
       "status": "ok",
-      "seconds": 0.11
+      "seconds": 0.04
     },
     {
       "name": "11_business_impact_dio_fulfillment",
       "status": "ok",
-      "seconds": 0.14
+      "seconds": 0.04
     }
   ],
-  "finished_at": "2026-06-30T22:19:56.984863+00:00",
+  "finished_at": "2026-11-15T23:24:35.622495+00:00",
   "status": "success"
 }

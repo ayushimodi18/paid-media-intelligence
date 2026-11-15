@@ -105,15 +105,18 @@ with tab1:
     with c3:
         _reconciled_metric("amazon")
 
-    if report["google_unreconciled"] > 0:
-        st.warning(
-            f"⚠️ {report['google_unreconciled']} Google rows failed SKU reconciliation. "
-            f"Root cause: the category 'T-Shirt' (and similarly 'Sponsored' multi-word categories) "
-            f"contains a hyphen, which collides with the '-' delimiter used in the platform key "
-            f"(goog::t-shirt-black-men), breaking the 3-way split on category/color/gender. "
-            f"In production this map would come from a PIM feed with stable platform catalog "
-            f"IDs, not string parsing."
+    if report["google_repaired"] > 0:
+        st.info(
+            f"🔧 **{report['google_repaired']:,} Google rows ({report['google_repaired'] / report['google_total_rows']:.1%}) "
+            f"hit a key-parsing collision — detected and repaired.** The category 'T-Shirt' contains a "
+            f"hyphen, which collides with the '-' delimiter in the platform key (goog::t-shirt-black-men), "
+            f"so a naive 3-way split on category/color/gender fails. Dropping these rows would have silently "
+            f"removed every T-Shirt SKU from Google's forecasts and budget allocation. Repair: color and "
+            f"gender are always the last two tokens, so the key is split from the right. In production this "
+            f"map would come from a PIM feed with stable catalog IDs, not string parsing."
         )
+    if report["google_unreconciled"] > 0:
+        st.warning(f"⚠️ {report['google_unreconciled']:,} Google rows have unrecognised keys and were excluded.")
     if report["amazon_unreconciled"] > 0:
         st.warning(
             f"⚠️ {report['amazon_unreconciled']} Amazon rows failed SKU reconciliation. "
@@ -248,7 +251,7 @@ with tab4:
         rec_df = st.session_state["rec_df"].copy()
         summary = st.session_state["summary"]
         decisions = {}
-        for i, r in rec_df.iterrows():
+        for _, r in rec_df.iterrows():
             with st.container(border=True):
                 narrative = _cached_narrative(r.to_dict(), summary,
                                               has_api_key=bool(os.environ.get("ANTHROPIC_API_KEY")))

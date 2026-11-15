@@ -15,11 +15,11 @@ brand selling across Meta, Google and Amazon.
 ## Highlights
 
 - **End-to-end pipeline, 11 stages** — raw ad-platform exports → validation gates → SKU reconciliation → features → EDA → model selection → budget optimization → business impact, with structured logging and a run manifest.
-- **Forecasting that beats the baseline** — 4 models (Prophet, XGBoost, LightGBM, Ridge) compared per channel with 4-fold rolling-window cross-validation. Best-model MAPE vs. naive baseline: **Amazon 8.3% vs 21.6%**, **Google 11.0% vs 29.5%**, **Meta 14.1% vs 18.7%**.
+- **Forecasting that beats the baseline** — 4 models (Prophet, XGBoost, LightGBM, Ridge) compared per channel with 4-fold rolling-window cross-validation. Best-model MAPE vs. naive baseline: **Amazon 8.3% vs 21.6%**, **Google 11.3% vs 25.9%**, **Meta 14.1% vs 18.7%**.
 - **Constrained budget optimizer** (Hill saturation curves + SLSQP) that surfaces a non-obvious finding: reallocation alone *can't* reach the 4.0x ROAS target because every channel has converged to ~2.3x marginal ROAS — the lever is total spend, not the split.
-- **Data quality caught, not hidden** — validation flags 2,920 Google rows (22%) that fail SKU reconciliation and traces the root cause (hyphen/delimiter collision), plus Amazon catalog drift.
+- **Data quality caught and fixed** — 2,920 Google rows (22%) failed SKU matching because the category "T-Shirt" collides with the `-` key delimiter. Dropping them would have silently removed every T-Shirt SKU from Google's analysis and **understated Google's daily spend by 37%**; the pipeline detects the collision, repairs it with delimiter-aware parsing, and records how each row was matched. A separate Amazon catalog-drift case (unmapped ASIN) is flagged and excluded.
 - **Grounded LLM explanations** — a local model (Ollama) or Claude drafts the marketer-facing "why"; a precision-aware fact-checker rejects any number not traceable to the optimizer's output and falls back to a deterministic template.
-- **27 automated tests** run on every push via GitHub Actions — including feature-leakage prevention, validation-gate behavior, optimizer constraints and hallucination control.
+- **29 automated tests** run on every push via GitHub Actions — including feature-leakage prevention, validation-gate behavior, optimizer constraints and hallucination control.
 
 > **Data note:** ad performance data is synthetic, calibrated to cited 2026 industry benchmarks (see [Benchmark sources](#benchmark-sources-compiled-july-2026)). Methods are built to run unchanged on real exports.
 
@@ -95,7 +95,7 @@ paid-media-intelligence/
 │   ├── llm_narrator.py          # the one real LLM call — grounded, with hallucination control
 │   └── business_impact.py       # DIO / stockout / fulfillment cost translation layer
 ├── tests/
-│   └── test_pipeline.py         # 27 pytest tests across all stages
+│   └── test_pipeline.py         # 29 pytest tests across all stages
 ├── data/                        # generated CSVs + all intermediate/output artifacts
 └── outputs/eda/                 # EDA charts (PNG) + markdown report
 ```
@@ -113,7 +113,7 @@ paid-media-intelligence/
 | Budget waste/underspend detector | **Real**, addresses the project's tertiary success metric directly. Honest limitation stated in-app: no hourly pacing data exists in this dataset, so true "hit the cap by noon" detection isn't possible — a documented daily proxy (90th-percentile historical spend as ceiling) is used instead. |
 | Marketer approval view | **Real UI**, fully interactive. No execution happens — submitting just records the decision. |
 | Ads API calls | **Stubbed.** No live credentials. |
-| Automated tests | **Real**, 27 pytest tests, run on every push via GitHub Actions: reconciliation correctness (including locking in the intentional Google hyphen-collision bug so it isn't silently "fixed" by a future refactor), feature-leakage prevention, validation gate behavior, optimizer constraint compliance, budget-flag mutual exclusivity, LLM groundedness (fabricated and near-miss numbers rejected, honest rounding accepted). All passing. |
+| Automated tests | **Real**, 29 pytest tests, run on every push via GitHub Actions: reconciliation correctness (the Google delimiter collision is detected and repaired, and no Google rows are lost), feature-leakage prevention, validation gate behavior, optimizer constraint compliance, budget-flag mutual exclusivity, LLM groundedness (fabricated and near-miss numbers rejected, honest rounding accepted). All passing. |
 | Microsoft | **Out of scope for this slice** by design — the scope allows picking 2-3 platforms. |
 | NC-CPA (secondary success metric) | **Real, computed from raw exports** — split by prospecting vs. retargeting (the dimension the requirements specifically ask for), not just blended per channel. Currently all channels are within the $45 cited target even while blended ROAS misses its target — a real, differentiated finding (the problem is auction saturation, not overpaying for new customers). |
 | LLM integration | **Real, one genuine call, 3-tier provider chain**: (1) a local open-source model via Ollama (default — free, no API key, no third-party data exposure, no external uptime dependency), (2) the Claude API if a key is provided and Ollama isn't reachable, (3) a deterministic template if neither is available. Powers the recommendation narrator in the marketer approval view. Hallucination control applies regardless of provider: constrained context (only the relevant numbers, nothing else), explicit no-invented-figures instruction, and a post-hoc, **precision-aware** groundedness check: every number in the output is matched against the inputs at the precision it was written with ("2.94x" must match an input that rounds to 2.94; "99.9" can never pass as a rounding of 100) — a failed check falls back to the template rather than risk showing a fabricated number. |
@@ -170,14 +170,20 @@ Streamlit "data health" panel or CI step could consume it directly.
 ## EDA summary
 See `outputs/eda/eda_report.md` and the 7 PNG charts for the full
 output. Headline findings:
-- Blended ROAS across the dataset sits below the project's 4.0x target on
-  all three channels (see `03_roas_boxplot.png`).
-- ~1-2% of rows per channel are IQR-based spend outliers (BFCM/Christmas
-  spikes) — handled via winsorization, not deletion.
-- Clear weekend revenue lift across all channels (`04_weekly_seasonality.png`).
-- Hero-tier SKUs outperform tail-tier SKUs on ROAS in most channels
-  (`07_sku_tier_performance.png`), consistent with the budget-tiering
-  logic in the generator.
+Every finding below is computed by `src/eda.py` on each run, not hand-written:
+- Blended ROAS across the dataset is **2.86x**, below the project's 4.0x
+  target on all three channels (see `03_roas_boxplot.png`).
+- **4.9%** of rows are IQR-based spend outliers — over-represented in the
+  Nov 20–Dec 31 holiday window (32% of outliers vs. 11% of rows) and
+  concentrated in high-spend T-Shirt SKUs (68% from three of them). Handled via winsorization, not deletion.
+- Weekend revenue runs **17–20% above weekdays** on every channel
+  (`04_weekly_seasonality.png`).
+- Daily spend/revenue correlation is strong for Amazon and Google
+  (0.89 / 0.88) but weaker for Meta (0.69) — consistent with Meta's noisier
+  attribution and its harder forecasting problem.
+- **ROAS is nearly flat across SKU tiers** (≤0.03x spread within a channel):
+  tiering decides *how much* each SKU gets, not how efficiently it converts
+  (`07_sku_tier_performance.png`).
 
 ## Model evaluation methodology
 Four candidates (Prophet, XGBoost, LightGBM, Ridge on log-log features)
@@ -186,7 +192,7 @@ cross-validation** — each fold's test window is a fixed-size block walking
 forward through the series with strictly prior data as training, avoiding
 the single-holdout problem (one lucky/unlucky window deciding the winner).
 Reports mean ± std MAPE per model per channel; selection is by lowest mean
-CV MAPE. Current result: **Amazon → Prophet, Google → XGBoost, Meta →
+CV MAPE. Current result: **Amazon → Prophet, Google → Prophet, Meta →
 LightGBM** (Meta's models barely beat naive, 14.1% vs 18.7% — explainable
 by the recurring attribution-shock noise injected into that channel, not a
 modeling failure).
@@ -235,7 +241,7 @@ not a substitute for one.
 
 ## What I'd build next with two more weeks
 1. **Amazon + Microsoft connectors** extended with real ASIN/audience-network reporting nuances.
-2. **PIM-backed SKU reconciliation** replacing the intentionally-fragile string-parsing demo.
+2. **PIM-backed SKU reconciliation** replacing string-parsed platform keys with stable catalog IDs.
 3. **NC-CPA as a hard optimizer constraint**, not just a reported/tracked metric.
 4. **Hourly pacing data** to make the budget-utilization detector exact ("hit cap by noon") rather than a daily proxy.
 5. **Metric-aware LLM groundedness** — the current check verifies every number exists in the inputs at its written precision; next step is verifying each number is attributed to the *right* metric (e.g. a real ROAS value not mislabelled as marginal ROAS).

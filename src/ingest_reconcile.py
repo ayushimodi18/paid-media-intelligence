@@ -10,7 +10,8 @@ revenue.
 
 In production this map would come from the brand's Shopify/PIM product
 feed (SKU -> platform catalog ID), not be inferred from string matching --
-the inference here is a stand-in to demo the failure mode.
+the inference here is a stand-in that demonstrates detecting and repairing
+a key-parsing failure (see reconcile_google).
 """
 import pandas as pd
 import numpy as np
@@ -48,25 +49,56 @@ def reconcile_meta(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+_GOOGLE_LOOKUP = {
+    (v["category"].lower(), v["color"].lower(), v["gender"].lower()): k
+    for k, v in CANON.items()
+}
+
+
+def _google_attrs(key: str) -> str | None:
+    if not isinstance(key, str) or "::" not in key:
+        return None
+    return key.split("::", 1)[1]
+
+
+def _parse_google_naive(key: str):
+    """The obvious parse: split the attribute string on '-' into exactly
+    category/color/gender. Breaks when the category itself contains a hyphen
+    ('t-shirt-black-men' has 4 tokens) -- the delimiter-collision failure."""
+    attrs = _google_attrs(key)
+    if attrs is None:
+        return None
+    parts = attrs.split("-")
+    return _GOOGLE_LOOKUP.get(tuple(parts)) if len(parts) == 3 else None
+
+
+def _parse_google_delimiter_aware(key: str):
+    """Repair: color and gender are always single tokens at the END of the
+    key, so split from the right and let the category keep its hyphens."""
+    attrs = _google_attrs(key)
+    if attrs is None:
+        return None
+    parts = attrs.rsplit("-", 2)
+    return _GOOGLE_LOOKUP.get(tuple(parts)) if len(parts) == 3 else None
+
+
 def reconcile_google(df: pd.DataFrame) -> pd.DataFrame:
     """Google key looks like goog::t-shirt-black-men -- map back to canonical SKU
-    via the category/color/gender attributes, since there's no shared ID."""
-    lookup = {
-        (v["category"].lower(), v["color"].lower(), v["gender"].lower()): k
-        for k, v in CANON.items()
-    }
+    via the category/color/gender attributes, since there's no shared ID.
+
+    Two passes, so the data-quality issue is surfaced rather than hidden:
+      1. naive parse -- rows it can't map are counted as delimiter collisions
+      2. delimiter-aware parse repairs them; anything still unmapped is a
+         genuine unknown key and is excluded from the unified table.
+    `reconcile_method` records which pass mapped each row, for auditability."""
     df = df.copy()
-
-    def map_key(key):
-        try:
-            _, attrs = key.split("::")
-            cat, color, gender = attrs.split("-")
-            return lookup.get((cat, color, gender))
-        except Exception:
-            return None
-
-    df["sku"] = df["platform_sku_id"].apply(map_key)
+    naive = df["platform_sku_id"].apply(_parse_google_naive)
+    repaired = df["platform_sku_id"].apply(_parse_google_delimiter_aware)
+    df["sku"] = naive.fillna(repaired)
     df["reconciled"] = df["sku"].notna()
+    df["reconcile_method"] = np.select(
+        [naive.notna(), repaired.notna()], ["direct", "repaired_delimiter_collision"], default="failed"
+    )
     return df
 
 
@@ -90,7 +122,12 @@ def reconcile_amazon(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def unify() -> dict:
+def unify(save: bool = False) -> tuple[dict, pd.DataFrame]:
+    """Reconcile all three exports onto the unified schema.
+
+    Pure by default -- the dashboard and tests call this read-only. Only the
+    pipeline passes save=True to persist data/unified_performance.csv, so
+    viewing the app can never overwrite a pipeline artifact."""
     meta_raw = pd.read_csv(DATA / "meta_ads_export.csv", parse_dates=["date"])
     google_raw = pd.read_csv(DATA / "google_ads_export.csv", parse_dates=["date"])
     amazon_raw = pd.read_csv(DATA / "amazon_ads_export.csv", parse_dates=["date"])
@@ -107,6 +144,7 @@ def unify() -> dict:
         "google_total_rows": len(google),
         "google_reconciled": int(google["reconciled"].sum()),
         "google_unreconciled": int((~google["reconciled"]).sum()),
+        "google_repaired": int((google["reconcile_method"] == "repaired_delimiter_collision").sum()),
         "google_missing_revenue": int(google["revenue_attributed"].isna().sum()),
         "amazon_total_rows": len(amazon),
         "amazon_reconciled": int(amazon["reconciled"].sum()),
@@ -131,12 +169,13 @@ def unify() -> dict:
     unified = pd.concat([meta_u, google_u, amazon_u], ignore_index=True)
     unified["roas"] = (unified["revenue_attributed"] / unified["spend"]).replace([np.inf, -np.inf], 0)
 
-    unified.to_csv(DATA / "unified_performance.csv", index=False)
+    if save:
+        unified.to_csv(DATA / "unified_performance.csv", index=False)
     return report, unified
 
 
 if __name__ == "__main__":
-    report, unified = unify()
+    report, unified = unify(save=True)
     print("Reconciliation report:")
     for k, v in report.items():
         print(f"  {k}: {v}")

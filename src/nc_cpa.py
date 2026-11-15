@@ -28,7 +28,6 @@ industry but lower for retail) -- $45 sits inside that range as a
 blended cross-channel ceiling. Documented here, not asserted silently.
 """
 import pandas as pd
-import numpy as np
 from pathlib import Path
 
 DATA = Path(__file__).resolve().parents[1] / "data"

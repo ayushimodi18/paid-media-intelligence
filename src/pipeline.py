@@ -132,7 +132,7 @@ def main():
 
         with run.stage("03_ingest_and_reconcile"):
             import ingest_reconcile
-            report, unified = ingest_reconcile.unify()
+            report, unified = ingest_reconcile.unify(save=True)
             log.info(f"Reconciliation: Meta {report['meta_reconciled']}/{report['meta_total_rows']}, "
                       f"Google {report['google_reconciled']}/{report['google_total_rows']}, "
                       f"Amazon {report['amazon_reconciled']}/{report['amazon_total_rows']}")

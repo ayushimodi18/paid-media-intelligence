@@ -49,21 +49,30 @@ def tiny_meta_df():
 class TestReconciliation:
     def test_meta_known_sku_reconciles(self, tiny_meta_df):
         out = ir.reconcile_meta(tiny_meta_df)
-        assert out.loc[0, "reconciled"] == True
+        assert out.loc[0, "reconciled"]
         assert out.loc[0, "sku"] == "SKU-TEE-BLK-M"
 
-    def test_google_hyphen_collision_is_reproduced(self):
-        """The T-Shirt hyphen-collision bug is an intentional, documented
-        demo artifact -- this test locks in that it still happens, so a
-        future refactor doesn't accidentally 'fix' it without us noticing
-        (which would silently change the EDA/README narrative)."""
+    def test_google_hyphen_collision_is_detected_and_repaired(self):
+        """'t-shirt' contains the '-' delimiter, so the naive 3-way split
+        fails. The collision must be both detected (method recorded) and
+        repaired -- dropping these rows would silently remove every T-Shirt
+        SKU from Google's downstream forecasts and allocation."""
         df = pd.DataFrame({
-            "platform_sku_id": ["goog::t-shirt-black-men", "goog::polo-navy-men"],
+            "platform_sku_id": ["goog::t-shirt-black-men", "goog::polo-navy-men", "goog::unknown-thing"],
         })
+        assert ir._parse_google_naive("goog::t-shirt-black-men") is None  # the collision is real
         out = ir.reconcile_google(df)
-        assert out.loc[0, "reconciled"] == False  # T-Shirt hyphen breaks this one
-        assert out.loc[1, "reconciled"] == True    # Polo (no hyphen) works fine
+        assert out.loc[0, "sku"] == "SKU-TEE-BLK-M"
+        assert out.loc[0, "reconcile_method"] == "repaired_delimiter_collision"
         assert out.loc[1, "sku"] == "SKU-POLO-NVY-M"
+        assert out.loc[1, "reconcile_method"] == "direct"
+        assert not out.loc[2, "reconciled"]                 # genuinely unknown keys still fail
+        assert out.loc[2, "reconcile_method"] == "failed"
+
+    def test_unify_keeps_every_google_row(self):
+        report, unified = ir.unify()
+        assert report["google_unreconciled"] == 0
+        assert (unified["channel"] == "Google").sum() == report["google_total_rows"]
 
     def test_unify_produces_no_null_revenue(self):
         """After unify(), revenue_attributed must have zero nulls -- the
@@ -122,17 +131,17 @@ class TestValidation:
         bad = tiny_meta_df.copy()
         bad.loc[0, "spend"] = -50.0
         report = val.validate_raw_export(bad, "test_negative_spend")
-        assert report.passed == False
+        assert not report.passed
 
     def test_duplicate_rows_flagged(self, tiny_meta_df):
         dup = pd.concat([tiny_meta_df, tiny_meta_df.iloc[[0]]], ignore_index=True)
         report = val.validate_raw_export(dup, "test_dupes")
-        assert report.passed == False
+        assert not report.passed
         assert any("duplicate" in e.lower() for e in report.errors)
 
     def test_clean_data_passes(self, tiny_meta_df):
         report = val.validate_raw_export(tiny_meta_df, "test_clean")
-        assert report.passed == True
+        assert report.passed
 
 
 # ---------------------------------------------------------------- optimizer
@@ -176,7 +185,7 @@ class TestOptimizer:
         rec_df, _ = oa.recommend_allocation(curves)
         # this fixture's marginal ROAS at $10,000 spend should sit below the 2.4x default threshold
         assert rec_df.loc[0, "current_marginal_roas"] < 2.4
-        assert rec_df.loc[0, "diminishing_returns_flag"] == True
+        assert rec_df.loc[0, "diminishing_returns_flag"]
 
 
 # ---------------------------------------------------------------- budget utilization
@@ -247,7 +256,7 @@ class TestLlmNarrator:
         summary = {"current_blended_roas": 2.9, "projected_blended_roas": 2.95}
         result = llm_narrator.generate_recommendation_narrative(row, summary)
         assert result.provider == "template"
-        assert result.used_llm == False
+        assert not result.used_llm
         assert "1000" in result.text.replace(",", "")  # template references the real spend figure
 
     # Shared fixture for the groundedness tests -- deterministic, no live LLM call.
@@ -321,3 +330,12 @@ class TestBusinessImpact:
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_unify_is_read_only_by_default():
+    """The dashboard calls unify() on every page load; it must never
+    overwrite the pipeline's persisted unified table."""
+    path = ir.DATA / "unified_performance.csv"
+    before = path.stat().st_mtime_ns
+    ir.unify()
+    assert path.stat().st_mtime_ns == before

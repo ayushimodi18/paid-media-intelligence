@@ -17,7 +17,6 @@ We report MAPE, RMSE, and a naive-baseline comparison so "trust the output"
 is backed by numbers, not vibes.
 """
 import warnings
-warnings.filterwarnings("ignore")
 
 import numpy as np
 import pandas as pd
@@ -27,6 +26,10 @@ from sklearn.metrics import mean_absolute_percentage_error, mean_squared_error
 import xgboost as xgb
 import lightgbm as lgb
 from prophet import Prophet
+
+# Prophet/LightGBM emit verbose convergence and deprecation chatter during
+# repeated CV refits; silence it so pipeline logs stay readable.
+warnings.filterwarnings("ignore")
 
 DATA = Path(__file__).resolve().parents[1] / "data"
 HOLDOUT_DAYS = 10
@@ -72,6 +75,10 @@ def run_prophet(train, test):
     pdf = train.rename(columns={"date": "ds", "revenue": "y"})[["ds", "y", "spend"]]
     m.fit(pdf)
     future = test.rename(columns={"date": "ds"})[["ds", "spend"]]
+    # Prophet's uncertainty interval is simulated with numpy's global RNG;
+    # seed it so confidence bands are reproducible run-to-run (the other
+    # models already pin random_state=42).
+    np.random.seed(42)
     fcst = m.predict(future)
     return fcst["yhat"].values, fcst[["yhat_lower", "yhat_upper"]].values
 

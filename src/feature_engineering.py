@@ -56,10 +56,10 @@ def add_lag_and_rolling_features(df: pd.DataFrame, group_cols: list, value_col: 
         df[f"{value_col}_lag{lag}"] = grp.shift(lag)
     for window in windows:
         df[f"{value_col}_roll{window}_mean"] = grp.transform(
-            lambda s: s.shift(1).rolling(window, min_periods=1).mean()
+            lambda s, w=window: s.shift(1).rolling(w, min_periods=1).mean()
         )
         df[f"{value_col}_roll{window}_std"] = grp.transform(
-            lambda s: s.shift(1).rolling(window, min_periods=1).std()
+            lambda s, w=window: s.shift(1).rolling(w, min_periods=1).std()
         )
     # fill remaining NaNs (first `lag` rows of each group) with the group's
     # overall mean -- flagged via a companion indicator column so downstream

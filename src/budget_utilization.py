@@ -22,7 +22,6 @@ Both are FLAGS for a human to investigate, not auto-corrections -- exactly
 the "human in the loop" the requirements ask for.
 """
 import pandas as pd
-import numpy as np
 from pathlib import Path
 
 DATA = Path(__file__).resolve().parents[1] / "data"

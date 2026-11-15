@@ -166,8 +166,6 @@ def gen_channel(channel, spec, key_fn, type_field, type_dist, type_cpc_or_roas):
             revenue = max(revenue, 0)
             clicks = max(int(round(spend / cpc)), 0)
             impressions = max(int(round(clicks / max(ctr, 1e-4))), clicks)
-            aov = CATEGORY_AOV[cat]
-            conversions = max(int(round(revenue / aov)), 0)
             new_cust_share = np.random.uniform(0.25, 0.6)
 
             row = {
