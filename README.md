@@ -1,5 +1,10 @@
 # AI Paid Media Intelligence & Optimization
 
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://paid-media-intelligence.streamlit.app)
+
+**Live demo:** https://paid-media-intelligence.streamlit.app
+*(The app may take ~30 seconds to wake up if nobody has opened it recently. The hosted demo uses the template narrator, since a local Ollama model isn't available there.)*
+
 A production-structured prototype covering ingestion, validation, feature
 engineering, EDA, cross-validated forecasting, budget allocation, and a
 marketer approval view — built for a direct-to-consumer (DTC) apparel
